@@ -1,4 +1,6 @@
 import logging
+import pprint
+
 from .contants import (
     MODES_CONVERTER,
     ECO_CONVERTER,
@@ -13,22 +15,18 @@ _LOGGER = logging.getLogger(__name__)
 class System:
     """Manage a AirzoneCloud system"""
 
-    _api = None
-    _device = None
-    _data = {}
-    _zones = []
-
-    def __init__(self, api, device, data):
+    def __init__(self, api, site, data):
         self._api = api
-        self._device = device
-        self._data = data
+        self._site = site
+        self._zones = {}
+        self._set_data_refreshed(data)
+
+        # load zones
+        self._load_zones()
 
         # log
         _LOGGER.info("Init {}".format(self.str_complete))
         _LOGGER.debug(data)
-
-        # load zones
-        self._load_zones()
 
     def __str__(self):
         return "System(name={}, mode={}, eco={}, velocity={}, airflow={})".format(
@@ -37,7 +35,7 @@ class System:
 
     @property
     def str_complete(self):
-        return "System(name={}, mode={}, eco={}, velocity={}, airflow={}, id={}, system_number={}, device_id={})".format(
+        return "System(name={}, mode={}, eco={}, velocity={}, airflow={}, id={}, system_number={}, site_id={})".format(
             self.name,
             self.mode,
             self.eco,
@@ -45,7 +43,7 @@ class System:
             self.airflow,
             self.id,
             self.system_number,
-            self.device_id,
+            self.site_id,
         )
 
     #
@@ -145,8 +143,8 @@ class System:
         return self._data.get("id")
 
     @property
-    def device_id(self):
-        return self._data.get("device_id")
+    def site_id(self):
+        return self._data.get("site_id")
 
     @property
     def system_number(self):
@@ -197,13 +195,13 @@ class System:
         return self._zones
 
     #
-    # parent device
+    # parent site
     #
 
     @property
-    def device(self):
-        """ Get parent device """
-        return self._device
+    def site(self):
+        """ Get parent site """
+        return self._site
 
     #
     # Refresh
@@ -217,13 +215,13 @@ class System:
         self._ask_airzone_update()
 
     def refresh(self, refresh_zones=True):
-        """ Refresh current system data (call refresh_systems on parent device) """
+        """ Refresh current system data (call refresh_systems on parent site) """
 
         # ask airzone to update its data in airzonecloud (there is some delay so current update will be available on next refresh)
         self.ask_airzone_update()
 
-        # refresh systems (including current) from parent device
-        self.device.refresh_systems()
+        # refresh systems (including current) from parent site
+        self.site.refresh_systems()
 
         # refresh subzones in needed
         if refresh_zones:
@@ -235,21 +233,19 @@ class System:
 
     def _load_zones(self):
         """Load all zones for this system"""
+        #pprint.pprint(self._data)
         current_zones = self._zones
-        self._zones = []
+        self._zones = {}
         try:
-            for zone_data in self._api._get_zones(self.id):
-                zone = None
-                # search zone in current_zones (if where are refreshing zones)
-                for current_zone in current_zones:
-                    if current_zone.id == zone_data.get("id"):
-                        zone = current_zone
-                        zone._set_data_refreshed(zone_data)
-                        break
+            for zone_data in self._data.get("devices"):
+                zone_id = zone_data["device_id"]
+                zone = current_zones.get(zone_id)
                 # zone not found => instance new zone
                 if zone is None:
-                    zone = Zone(self._api, self, zone_data)
-                self._zones.append(zone)
+                    zone = Zone(self._api, self, zone_id)
+                else:
+                    pass
+                self._zones[zone.id] = zone
         except RuntimeError:
             raise Exception(
                 "Unable to load zones of system {} ({}) from AirzoneCloud".format(
@@ -264,7 +260,7 @@ class System:
         payload = {
             "event": {
                 "cgi": "modsistema",
-                "device_id": self.device_id,
+                "site_id": self.site_id,
                 "system_number": self.system_number,
                 "option": option,
                 "value": value,
@@ -277,7 +273,7 @@ class System:
         payload = {
             "event": {
                 "cgi": "infosistema2",
-                "device_id": self.device_id,
+                "site_id": self.site_id,
                 "system_number": self.system_number,
                 "option": None,
                 "value": None,
@@ -286,7 +282,7 @@ class System:
         return self._api._send_event(payload)
 
     def _set_data_refreshed(self, data):
-        """ Set data refreshed (call by parent device on refresh_systems()) """
+        """ Set data refreshed (call by parent site on refresh_systems()) """
         self._data = data
         _LOGGER.info("Data refreshed for {}".format(self.str_complete))
 
@@ -297,7 +293,7 @@ class System:
 
 # {
 #     "id": "...",
-#     "device_id": "...",
+#     "site_id": "...",
 #     "name": "Home",
 #     "eco": "2",
 #     "eco_color": "5",
